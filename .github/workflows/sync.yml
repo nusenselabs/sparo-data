@@ -1,0 +1,61 @@
+# Fetches the day's offers and Stop madspild items once a day.
+# While the repository is private, the files are kept as a download on the run page for 3 days.
+# Once it's public and the PUBLISH variable is "true", they are also published with GitHub Pages for the app.
+# Each day's publish replaces the last, so no old data is kept (Salling asks for deletion within a month).
+
+name: Daily data sync
+
+on:
+  schedule:
+    - cron: '30 3 * * *' # 03:30 UTC: 05:30 in summer, 04:30 in winter (Danish time)
+  workflow_dispatch: # "Run workflow" button for a manual run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Offers (ShelfAtlas)
+        run: node scripts/sync-offers.mjs
+        env:
+          SHELFATLAS_KEY: ${{ secrets.SHELFATLAS_KEY }}
+      - name: Stop madspild (Salling Group)
+        run: node scripts/sync-madspild.mjs
+        env:
+          SALLING_TOKEN: ${{ secrets.SALLING_TOKEN }}
+      - name: Keep the files for checking
+        uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: out/
+          retention-days: 3
+      - name: Prepare for publishing
+        if: vars.PUBLISH == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/
+
+  publish:
+    needs: sync
+    if: vars.PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
