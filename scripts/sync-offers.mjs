@@ -1,12 +1,16 @@
 // This week's avis offers from ShelfAtlas → out/offers.json.
-// Runs once a day on GitHub Actions. One run uses about 26 requests, so a month stays well inside the free plan's 1,000.
+// The free plan allows 1,000 requests a month and a full fetch takes about 30, so the job fetches everything once a
+// week (Sundays, or whenever there's no saved copy) and on other days only the offers added since the last run,
+// merged into the saved copy (state/offers.json, kept between runs by the workflow's cache). That's about 250 a month.
 // The key comes from the SHELFATLAS_KEY secret; it never appears in the output or the app.
 
 import fs from 'node:fs';
 
 const BASE = 'https://api.shelfatlas.com/api/v1/public/catalog';
 const OUT = 'out/offers.json';
+const STATE = 'state/offers.json';
 const MAX_REQUESTS = 60; // a safety stop, well above a normal run
+const FULL_EVERY_DAYS = 7;
 
 // Our chain ids → text that finds the matching ShelfAtlas chain.
 const WANTED = {
@@ -32,6 +36,16 @@ async function get(path) {
   return res.json();
 }
 
+/** Every page of an offers query. */
+async function allPages(query, keep) {
+  let cursor = null;
+  do {
+    const page = await get(`/offers?${query}&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    for (const o of page.data ?? []) keep(o);
+    cursor = page.pagination?.cursor ?? null;
+  } while (cursor);
+}
+
 const chainsRes = await get('/chains');
 const theirChains = chainsRes.data ?? chainsRes;
 const map = {};
@@ -40,27 +54,43 @@ for (const [ours, needle] of Object.entries(WANTED)) {
   if (hit) map[ours] = hit;
   else console.warn(`No ShelfAtlas chain found for ${ours}`);
 }
+const oursById = new Map(Object.entries(map).map(([ours, c]) => [c.id, ours]));
 
 const now = Date.now();
-const offers = [];
-for (const [ours, chain] of Object.entries(map)) {
-  let cursor = null;
-  let n = 0;
-  do {
-    const page = await get(`/offers?chain_slug=${encodeURIComponent(chain.slug)}&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
-    for (const o of page.data ?? []) {
-      if (o.validTo && new Date(o.validTo).getTime() < now) continue; // already ended
-      offers.push({ chain: ours, ...o });
-      n++;
-    }
-    cursor = page.pagination?.cursor ?? null;
-  } while (cursor);
-  console.log(`${chain.name}: ${n} current offers`);
+const current = (o) => !o.validTo || new Date(o.validTo).getTime() >= now;
+const saved = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
+// Updates match offers to chains by id; without ids for every chain, fetch everything rather than miss offers.
+const canUpdate = Object.values(map).every((c) => c.id);
+const fullDue = !saved || !canUpdate || new Date().getUTCDay() === 0 || now - new Date(saved.lastFullAt).getTime() > FULL_EVERY_DAYS * 86400000;
+
+const byId = new Map();
+let lastFullAt = saved?.lastFullAt;
+if (fullDue) {
+  for (const [ours, chain] of Object.entries(map)) {
+    let n = 0;
+    await allPages(`chain_slug=${encodeURIComponent(chain.slug)}`, (o) => { if (current(o)) { byId.set(o.id, { chain: ours, ...o }); n++; } });
+    console.log(`${chain.name}: ${n} current offers`);
+  }
+  lastFullAt = new Date(now).toISOString();
+} else {
+  for (const o of saved.offers) if (current(o)) byId.set(o.id, o);
+  // An hour's overlap, so nothing ingested during the last run is missed.
+  const since = new Date(new Date(saved.fetchedAt).getTime() - 3600000).toISOString();
+  let added = 0;
+  await allPages(`ingested_since=${encodeURIComponent(since)}`, (o) => {
+    const ours = oursById.get(o.chainId);
+    if (ours && current(o)) { byId.set(o.id, { chain: ours, ...o }); added++; }
+  });
+  console.log(`Update since ${since}: ${added} new or changed offers (last full fetch ${saved.lastFullAt}).`);
 }
 
-// A run that finds almost nothing is more likely an API problem than an empty week; keep yesterday's file then.
+const offers = [...byId.values()];
+// A run that finds almost nothing is more likely an API problem than an empty week; don't publish it.
 if (offers.length < 500) throw new Error(`Only ${offers.length} offers found; not publishing.`);
 
+const result = { source: 'ShelfAtlas public catalog API', fetchedAt: new Date(now).toISOString(), offers };
 fs.mkdirSync('out', { recursive: true });
-fs.writeFileSync(OUT, JSON.stringify({ source: 'ShelfAtlas public catalog API', fetchedAt: new Date().toISOString(), offers }));
-console.log(`Saved ${offers.length} offers to ${OUT}. Requests used: ${requests}, quota remaining: ${quota}.`);
+fs.mkdirSync('state', { recursive: true });
+fs.writeFileSync(OUT, JSON.stringify(result));
+fs.writeFileSync(STATE, JSON.stringify({ ...result, lastFullAt }));
+console.log(`Saved ${offers.length} offers to ${OUT} (${fullDue ? 'full fetch' : 'update'}). Requests used: ${requests}, quota remaining: ${quota}.`);

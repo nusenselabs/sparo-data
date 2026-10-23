@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The last run's offers, so most days only new offers need fetching (see sync-offers.mjs).
+      - name: Restore saved offers
+        uses: actions/cache@v4
+        with:
+          path: state/
+          key: offers-state-${{ github.run_id }}
+          restore-keys: offers-state-
       - name: Offers (ShelfAtlas)
         run: node scripts/sync-offers.mjs
         env:
