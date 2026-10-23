@@ -1,11 +1,12 @@
-// Stop madspild items at every Netto, føtex and Bilka in Denmark → out/clearances.json.
+// Stop madspild items at every Netto, føtex and Bilka in Denmark → out/madspild/stores.json (the stores) and one
+// out/madspild/<store id>.json per store, so a phone only downloads the stores near it.
 // Salling allows 100 Anti Food Waste requests a day, and each request returns the stores nearest a point
 // (about 15). points.json holds 76 points planned from the stores' locations so that together they reach all
 // of them, which leaves room for a manual re-run on a bad day. The token comes from the SALLING_TOKEN secret.
 
 import fs from 'node:fs';
 
-const OUT = 'out/clearances.json';
+const OUT = 'out/madspild';
 const POINTS = JSON.parse(fs.readFileSync(new URL('./points.json', import.meta.url), 'utf8'));
 const RADIUS_KM = 40; // generous, so rural points still reach their nearest stores
 const MAX_REQUESTS = 85; // stays under Salling's 100 a day
@@ -66,9 +67,9 @@ for (const [lat, lng] of POINTS) {
       const image = c.product.image && !/\/image$/.test(c.product.image) ? c.product.image : null;
       const id = `${store.id}-${c.offer.ean}`;
       items.set(id, {
-        id, storeId: store.id, ean: c.offer.ean ?? c.product.ean,
+        id, storeId: store.id,
         title: niceName(c.product.description), category: categoryOf(c.product.categories?.en),
-        newPrice: c.offer.newPrice, originalPrice: c.offer.originalPrice, percentDiscount: c.offer.percentDiscount,
+        newPrice: c.offer.newPrice, originalPrice: c.offer.originalPrice,
         stock: c.offer.stock, stockUnit: c.offer.stockUnit, endsAt: c.offer.endTime, image,
       });
     }
@@ -77,6 +78,12 @@ for (const [lat, lng] of POINTS) {
 
 if (storesById.size < 100) throw new Error(`Only ${storesById.size} stores reached; not publishing.`);
 
-fs.mkdirSync('out', { recursive: true });
-fs.writeFileSync(OUT, JSON.stringify({ source: 'Salling Group Anti Food Waste API', fetchedAt: new Date().toISOString(), stores: [...storesById.values()], items: [...items.values()] }));
-console.log(`Saved ${storesById.size} stores and ${items.size} items to ${OUT} using ${requests} requests.`);
+const fetchedAt = new Date().toISOString();
+const note = 'Internal data file for the Sparø app. Not an open dataset.';
+const byStore = new Map();
+for (const i of items.values()) byStore.set(i.storeId, [...(byStore.get(i.storeId) ?? []), i]);
+fs.mkdirSync(OUT, { recursive: true });
+for (const [id, list] of byStore) fs.writeFileSync(`${OUT}/${id}.json`, JSON.stringify({ fetchedAt, items: list }));
+const stores = [...storesById.values()].map((s) => ({ ...s, items: byStore.get(s.id)?.length ?? 0 }));
+fs.writeFileSync(`${OUT}/stores.json`, JSON.stringify({ note, source: 'Stop madspild © Salling Group', fetchedAt, stores }));
+console.log(`Saved ${storesById.size} stores and ${items.size} items to ${OUT}/ using ${requests} requests.`);

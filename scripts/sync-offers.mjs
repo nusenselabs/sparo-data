@@ -10,6 +10,9 @@ const BASE = 'https://api.shelfatlas.com/api/v1/public/catalog';
 const OUT = 'out/offers.json';
 const STATE = 'state/offers.json';
 const MAX_REQUESTS = 60; // a safety stop, well above a normal run
+// Only what the app shows. ShelfAtlas asks that the file stays an app-internal resource, not a dataset.
+const FIELDS = ['id', 'chain', 'chainId', 'rawName', 'price', 'originalPrice', 'unitPrice', 'unitPriceUnit', 'validFrom', 'validTo', 'volumeMl', 'unitCount'];
+const slim = (o) => Object.fromEntries(FIELDS.filter((f) => o[f] != null).map((f) => [f, o[f]]));
 const FULL_EVERY_DAYS = 7;
 
 // Our chain ids → text that finds the matching ShelfAtlas chain.
@@ -68,18 +71,18 @@ let lastFullAt = saved?.lastFullAt;
 if (fullDue) {
   for (const [ours, chain] of Object.entries(map)) {
     let n = 0;
-    await allPages(`chain_slug=${encodeURIComponent(chain.slug)}`, (o) => { if (current(o)) { byId.set(o.id, { chain: ours, ...o }); n++; } });
+    await allPages(`chain_slug=${encodeURIComponent(chain.slug)}`, (o) => { if (current(o)) { byId.set(o.id, slim({ chain: ours, ...o })); n++; } });
     console.log(`${chain.name}: ${n} current offers`);
   }
   lastFullAt = new Date(now).toISOString();
 } else {
-  for (const o of saved.offers) if (current(o)) byId.set(o.id, o);
+  for (const o of saved.offers) if (current(o)) byId.set(o.id, slim(o));
   // An hour's overlap, so nothing ingested during the last run is missed.
   const since = new Date(new Date(saved.fetchedAt).getTime() - 3600000).toISOString();
   let added = 0;
   await allPages(`ingested_since=${encodeURIComponent(since)}`, (o) => {
     const ours = oursById.get(o.chainId);
-    if (ours && current(o)) { byId.set(o.id, { chain: ours, ...o }); added++; }
+    if (ours && current(o)) { byId.set(o.id, slim({ chain: ours, ...o })); added++; }
   });
   console.log(`Update since ${since}: ${added} new or changed offers (last full fetch ${saved.lastFullAt}).`);
 }
@@ -88,9 +91,10 @@ const offers = [...byId.values()];
 // A run that finds almost nothing is more likely an API problem than an empty week; don't publish it.
 if (offers.length < 500) throw new Error(`Only ${offers.length} offers found; not publishing.`);
 
-const result = { source: 'ShelfAtlas public catalog API', fetchedAt: new Date(now).toISOString(), offers };
+const result = { note: 'Internal data file for the Sparø app. Not an open dataset.', source: 'Offers via ShelfAtlas', fetchedAt: new Date(now).toISOString(), offers };
 fs.mkdirSync('out', { recursive: true });
 fs.mkdirSync('state', { recursive: true });
+fs.writeFileSync('out/robots.txt', 'User-agent: *\nDisallow: /\n');
 fs.writeFileSync(OUT, JSON.stringify(result));
 fs.writeFileSync(STATE, JSON.stringify({ ...result, lastFullAt }));
 console.log(`Saved ${offers.length} offers to ${OUT} (${fullDue ? 'full fetch' : 'update'}). Requests used: ${requests}, quota remaining: ${quota}.`);

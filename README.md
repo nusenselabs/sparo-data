@@ -1,6 +1,9 @@
 # sparo-data
 
-The daily data behind the Sparø app (www.sparø.dk): this week's avis offers and today's Stop madspild items.
+The daily sync behind the Sparø app (www.sparø.dk).
+
+**The files this produces are internal to the Sparø app. They are not an open dataset: please don't use, copy or link to them.**
+Offers come from ShelfAtlas and Stop madspild from Salling Group, under their terms for Sparø.
 
 A GitHub Actions job ([`.github/workflows/sync.yml`](.github/workflows/sync.yml)) runs once a day:
 
@@ -9,7 +12,7 @@ A GitHub Actions job ([`.github/workflows/sync.yml`](.github/workflows/sync.yml)
   every Netto, føtex and Bilka (`scripts/sync-madspild.mjs`). The request points in `scripts/points.json` were planned from the stores' locations
   (© OpenStreetMap contributors).
 
-The output is `offers.json` and `clearances.json`. The data isn't kept in this repository: each run replaces the last.
+The data isn't kept in this repository: each run replaces the last, and search engines are asked to ignore it.
 
 ## Setup
 
