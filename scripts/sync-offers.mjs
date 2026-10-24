@@ -11,7 +11,7 @@ const OUT = 'out/offers.json';
 const STATE = 'state/offers.json';
 const MAX_REQUESTS = 60; // a safety stop, well above a normal run
 // Only what the app shows. ShelfAtlas asks that the file stays an app-internal resource, not a dataset.
-const FIELDS = ['id', 'chain', 'chainId', 'rawName', 'price', 'originalPrice', 'unitPrice', 'unitPriceUnit', 'validFrom', 'validTo', 'volumeMl', 'unitCount'];
+const FIELDS = ['id', 'chain', 'chainId', 'rawName', 'price', 'originalPrice', 'unitPrice', 'unitPriceUnit', 'validFrom', 'validTo', 'volumeMl', 'unitCount', 'cropUrl', 'imageUrl'];
 const slim = (o) => Object.fromEntries(FIELDS.filter((f) => o[f] != null).map((f) => [f, o[f]]));
 const FULL_EVERY_DAYS = 7;
 
