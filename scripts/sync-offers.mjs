@@ -64,7 +64,10 @@ const current = (o) => !o.validTo || new Date(o.validTo).getTime() >= now;
 const saved = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
 // Updates match offers to chains by id; without ids for every chain, fetch everything rather than miss offers.
 const canUpdate = Object.values(map).every((c) => c.id);
-const fullDue = !saved || !canUpdate || new Date().getUTCDay() === 0 || now - new Date(saved.lastFullAt).getTime() > FULL_EVERY_DAYS * 86400000;
+// STATE_VERSION 2: copies saved before the per-chain fix lack photos on midweek offers, so they get one full refresh.
+const STATE_VERSION = 2;
+const fullDue = !saved || saved.version !== STATE_VERSION || !canUpdate || new Date().getUTCDay() === 0
+  || now - new Date(saved.lastFullAt).getTime() > FULL_EVERY_DAYS * 86400000;
 
 const byId = new Map();
 let lastFullAt = saved?.lastFullAt;
@@ -79,11 +82,13 @@ if (fullDue) {
   for (const o of saved.offers) if (current(o)) byId.set(o.id, slim(o));
   // An hour's overlap, so nothing ingested during the last run is missed.
   const since = new Date(new Date(saved.fetchedAt).getTime() - 3600000).toISOString();
+  // Per chain: ShelfAtlas only includes the offer photos (cropUrl) in chain-scoped lists. About 11 requests a day.
   let added = 0;
-  await allPages(`ingested_since=${encodeURIComponent(since)}`, (o) => {
-    const ours = oursById.get(o.chainId);
-    if (ours && current(o)) { byId.set(o.id, slim({ chain: ours, ...o })); added++; }
-  });
+  for (const [ours, chain] of Object.entries(map)) {
+    await allPages(`chain_slug=${encodeURIComponent(chain.slug)}&ingested_since=${encodeURIComponent(since)}`, (o) => {
+      if (current(o)) { byId.set(o.id, slim({ chain: ours, ...o })); added++; }
+    });
+  }
   console.log(`Update since ${since}: ${added} new or changed offers (last full fetch ${saved.lastFullAt}).`);
 }
 
@@ -96,5 +101,5 @@ fs.mkdirSync('out', { recursive: true });
 fs.mkdirSync('state', { recursive: true });
 fs.writeFileSync('out/robots.txt', 'User-agent: *\nDisallow: /\n');
 fs.writeFileSync(OUT, JSON.stringify(result));
-fs.writeFileSync(STATE, JSON.stringify({ ...result, lastFullAt }));
+fs.writeFileSync(STATE, JSON.stringify({ ...result, lastFullAt, version: STATE_VERSION }));
 console.log(`Saved ${offers.length} offers to ${OUT} (${fullDue ? 'full fetch' : 'update'}). Requests used: ${requests}, quota remaining: ${quota}.`);
